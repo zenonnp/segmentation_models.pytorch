@@ -13,6 +13,9 @@ class Unet(EncoderDecoder):
         decoder_channels: list of numbers of ``Conv2D`` layer filters in decoder blocks
         decoder_use_batchnorm: if ``True``, ``BatchNormalisation`` layer between ``Conv2D`` and ``Activation`` layers
             is used.
+        decoder_type: one of ``upsample``, ``transpose``; specify which kind of block to use:
+            - Conv2d + Upsampling
+            - ConvTranspose2d
         classes: a number of classes for output (output shape - ``(batch, classes, h, w)``).
         activation: activation function used in ``.predict(x)`` method for inference.
             One of [``sigmoid``, ``softmax``, callable, None]
@@ -31,10 +34,11 @@ class Unet(EncoderDecoder):
             encoder_name='resnet34',
             encoder_weights='imagenet',
             decoder_use_batchnorm=True,
+            decoder_type='upsample',
             decoder_channels=(256, 128, 64, 32, 16),
             classes=1,
             activation='sigmoid',
-            center=False,  # usefull for VGG models
+            center=False,  # useful for VGG models
     ):
         encoder = get_encoder(
             encoder_name,
@@ -47,6 +51,7 @@ class Unet(EncoderDecoder):
             final_channels=classes,
             use_batchnorm=decoder_use_batchnorm,
             center=center,
+            type=decoder_type,
         )
 
         super().__init__(encoder, decoder, activation)
