@@ -51,7 +51,7 @@ class Unet(EncoderDecoder):
             final_channels=classes,
             use_batchnorm=decoder_use_batchnorm,
             center=center,
-            type=decoder_type,
+            block_type=decoder_type,
         )
 
         super().__init__(encoder, decoder, activation)

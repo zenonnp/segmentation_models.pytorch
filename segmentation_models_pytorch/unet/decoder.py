@@ -49,13 +49,13 @@ class ConvTransposeBlock(nn.Module):
 
 class DecoderBlock(nn.Module):
 
-    def __init__(self, in_channels, out_channels, use_batchnorm=True, type="upsample"):
+    def __init__(self, in_channels, out_channels, use_batchnorm=True, block_type="upsample"):
         super().__init__()
 
-        if type == "upsample":
+        if block_type == "upsample":
             self.block = ConvUpsampleBlock(in_channels, out_channels, use_batchnorm)
 
-        elif type == "transpose":
+        elif block_type == "transpose":
             self.block = ConvTransposeBlock(in_channels, out_channels, use_batchnorm)
 
         else:
@@ -74,11 +74,11 @@ class UnetDecoder(Model):
             final_channels=1,
             use_batchnorm=True,
             center=False,
-            type="upsample",
+            block_type="upsample",
     ):
         super().__init__()
 
-        if type not in ("upsample", "transpose"):
+        if block_type not in ("upsample", "transpose"):
             raise ValueError("Supported block types: `upsample`, `transpose`")
 
         if center:
@@ -87,16 +87,16 @@ class UnetDecoder(Model):
         else:
             self.center = None
 
-        in_channels = self.compute_channels(encoder_channels, decoder_channels, type=type)
+        in_channels = self.compute_channels(encoder_channels, decoder_channels, block_type=block_type)
         out_channels = decoder_channels
 
-        self.layer1 = DecoderBlock(in_channels[0], out_channels[0], use_batchnorm=use_batchnorm, type=type)
-        self.layer2 = DecoderBlock(in_channels[1], out_channels[1], use_batchnorm=use_batchnorm, type=type)
-        self.layer3 = DecoderBlock(in_channels[2], out_channels[2], use_batchnorm=use_batchnorm, type=type)
-        self.layer4 = DecoderBlock(in_channels[3], out_channels[3], use_batchnorm=use_batchnorm, type=type)
-        self.layer5 = DecoderBlock(in_channels[4], out_channels[4], use_batchnorm=use_batchnorm, type=type)
+        self.layer1 = DecoderBlock(in_channels[0], out_channels[0], use_batchnorm=use_batchnorm, block_type=block_type)
+        self.layer2 = DecoderBlock(in_channels[1], out_channels[1], use_batchnorm=use_batchnorm, block_type=block_type)
+        self.layer3 = DecoderBlock(in_channels[2], out_channels[2], use_batchnorm=use_batchnorm, block_type=block_type)
+        self.layer4 = DecoderBlock(in_channels[3], out_channels[3], use_batchnorm=use_batchnorm, block_type=block_type)
+        self.layer5 = DecoderBlock(in_channels[4], out_channels[4], use_batchnorm=use_batchnorm, block_type=block_type)
 
-        if type == "transpose":
+        if block_type == "transpose":
             self.final_block = ConvBlock(out_channels[4], out_channels[4], use_batchnorm=use_batchnorm)
         else:
             self.final_block = None
@@ -105,9 +105,9 @@ class UnetDecoder(Model):
 
         self.initialize()
 
-    def compute_channels(self, encoder_channels, decoder_channels, type="upsample"):
+    def compute_channels(self, encoder_channels, decoder_channels, block_type="upsample"):
 
-        if type == "upsample":
+        if block_type == "upsample":
             channels = [
                 encoder_channels[0] + encoder_channels[1],
                 encoder_channels[2] + decoder_channels[0],
