@@ -6,7 +6,21 @@ from ..common.blocks import Conv2dReLU, ConvTranspose2dReLU
 from ..base.model import Model
 
 
-class ConvBlock(nn.Module):
+def pad_zeros(x, length):
+    x = list(x)
+    for _ in range(length - len(x)):
+        x.append(0)
+    return x
+
+
+def pad_none(x, length):
+    x = list(x)
+    for _ in range(length - len(x)):
+        x.append(None)
+    return x
+
+
+class CenterBlock(nn.Module):
     def __init__(self, in_channels, out_channels, use_batchnorm=True):
         super().__init__()
         self.block = nn.Sequential(
@@ -18,51 +32,63 @@ class ConvBlock(nn.Module):
         return self.block(x)
 
 
-class ConvUpsampleBlock(ConvBlock):
+class ConvUpsampleX2Block(nn.Module):
 
-    def forward(self, x):
-        x, skip = x
+    def __init__(self, in_channels, out_channels, skip_channels=0, use_batchnorm=True):
+        super().__init__()
+        self.conv1 = Conv2dReLU(
+            in_channels + skip_channels,
+            out_channels,
+            kernel_size=3,
+            padding=1,
+            use_batchnorm=use_batchnorm,
+        )
+
+        self.conv2 = Conv2dReLU(
+            out_channels,
+            out_channels,
+            kernel_size=3,
+            padding=1,
+            use_batchnorm=use_batchnorm,
+        )
+
+    def forward(self, x, skip=None):
         x = F.interpolate(x, scale_factor=2, mode='nearest')
         if skip is not None:
             x = torch.cat([x, skip], dim=1)
-        x = self.block(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
         return x
 
 
-class ConvTransposeBlock(nn.Module):
+class ConvTransposeX2Block(nn.Module):
 
-    def __init__(self, in_channels, out_channels, use_batchnorm=True):
+    def __init__(self, in_channels, out_channels, skip_channels=0, use_batchnorm=True):
         super().__init__()
-        self.block = nn.Sequential(
-            Conv2dReLU(in_channels, out_channels, kernel_size=3, padding=1, use_batchnorm=use_batchnorm),
-            ConvTranspose2dReLU(out_channels, out_channels, kernel_size=4, padding=1,
-                                stride=2, use_batchnorm=use_batchnorm),
+
+        self.conv1 = ConvTranspose2dReLU(
+            in_channels,
+            in_channels,
+            kernel_size=4,
+            padding=1,
+            stride=2,
+            use_batchnorm=use_batchnorm,
         )
 
-    def forward(self, x):
-        x, skip = x
-        x = self.block(x)
+        self.conv2 = Conv2dReLU(
+            in_channels + skip_channels,
+            out_channels,
+            kernel_size=3,
+            padding=1,
+            use_batchnorm=use_batchnorm,
+        )
+
+    def forward(self, x, skip=None):
+        x = self.conv1(x)
         if skip is not None:
             x = torch.cat([x, skip], dim=1)
+        x = self.conv2(x)
         return x
-
-
-class DecoderBlock(nn.Module):
-
-    def __init__(self, in_channels, out_channels, use_batchnorm=True, block_type="upsample"):
-        super().__init__()
-
-        if block_type == "upsample":
-            self.block = ConvUpsampleBlock(in_channels, out_channels, use_batchnorm)
-
-        elif block_type == "transpose":
-            self.block = ConvTransposeBlock(in_channels, out_channels, use_batchnorm)
-
-        else:
-            raise ValueError("Supported block types: `upsample`, `transpose`")
-
-    def forward(self, x):
-        return self.block(x)
 
 
 class UnetDecoder(Model):
@@ -75,71 +101,46 @@ class UnetDecoder(Model):
             use_batchnorm=True,
             center=False,
             block_type="upsample",
+            num_blocks=5,
     ):
         super().__init__()
 
-        if block_type not in ("upsample", "transpose"):
+        self.num_blocks = num_blocks
+
+        if block_type == "upsample":
+            DecoderBlock = ConvUpsampleX2Block
+        elif block_type == "transpose":
+            DecoderBlock = ConvTransposeX2Block
+        else:
             raise ValueError("Supported block types: `upsample`, `transpose`")
 
         if center:
             channels = encoder_channels[0]
-            self.center = ConvBlock(channels, channels, use_batchnorm=use_batchnorm)
+            self.center = CenterBlock(channels, channels, use_batchnorm=use_batchnorm)
         else:
             self.center = None
 
-        in_channels = self.compute_channels(encoder_channels, decoder_channels, block_type=block_type)
+        in_channels = encoder_channels[:1] + decoder_channels[:-1]
+        skip_channels = pad_zeros(encoder_channels[1:], length=num_blocks)
         out_channels = decoder_channels
 
-        self.layer1 = DecoderBlock(in_channels[0], out_channels[0], use_batchnorm=use_batchnorm, block_type=block_type)
-        self.layer2 = DecoderBlock(in_channels[1], out_channels[1], use_batchnorm=use_batchnorm, block_type=block_type)
-        self.layer3 = DecoderBlock(in_channels[2], out_channels[2], use_batchnorm=use_batchnorm, block_type=block_type)
-        self.layer4 = DecoderBlock(in_channels[3], out_channels[3], use_batchnorm=use_batchnorm, block_type=block_type)
-        self.layer5 = DecoderBlock(in_channels[4], out_channels[4], use_batchnorm=use_batchnorm, block_type=block_type)
+        self.blocks = nn.ModuleList(
+            [DecoderBlock(in_channels[i], out_channels[i], skip_channels[i], use_batchnorm)
+             for i in range(num_blocks)]
+        )
 
-        if block_type == "transpose":
-            self.final_block = ConvBlock(out_channels[4], out_channels[4], use_batchnorm=use_batchnorm)
-        else:
-            self.final_block = None
-
-        self.final_conv = nn.Conv2d(out_channels[4], final_channels, kernel_size=(1, 1))
+        self.final_conv = nn.Conv2d(out_channels[-1], final_channels, kernel_size=(1, 1))
 
         self.initialize()
 
-    def compute_channels(self, encoder_channels, decoder_channels, block_type="upsample"):
-
-        if block_type == "upsample":
-            channels = [
-                encoder_channels[0] + encoder_channels[1],
-                encoder_channels[2] + decoder_channels[0],
-                encoder_channels[3] + decoder_channels[1],
-                encoder_channels[4] + decoder_channels[2],
-                0 + decoder_channels[3],
-            ]
-        else:
-            channels = [
-                encoder_channels[0],
-                encoder_channels[1] + decoder_channels[0],
-                encoder_channels[2] + decoder_channels[1],
-                encoder_channels[3] + decoder_channels[2],
-                encoder_channels[4] + decoder_channels[3],
-            ]
-        return channels
-
-    def forward(self, x):
-        encoder_head = x[0]
-        skips = x[1:]
+    def forward(self, x, skips):
 
         if self.center:
-            encoder_head = self.center(encoder_head)
+            x = self.center(x)
 
-        x = self.layer1([encoder_head, skips[0]])
-        x = self.layer2([x, skips[1]])
-        x = self.layer3([x, skips[2]])
-        x = self.layer4([x, skips[3]])
-        x = self.layer5([x, None])
-
-        if self.final_block:
-            x = self.final_block(x)
+        skips = pad_none(skips, length=self.num_blocks)  # make None padding ([0, 1, 2] -> [0, 1, 2, None, None])
+        for i in range(self.num_blocks):
+            x = self.blocks[i](x, skip=skips[i])
 
         x = self.final_conv(x)
 

@@ -52,8 +52,14 @@ class Unet(EncoderDecoder):
             use_batchnorm=decoder_use_batchnorm,
             center=center,
             block_type=decoder_type,
+            num_blocks=5,
         )
 
         super().__init__(encoder, decoder, activation)
 
         self.name = 'u-{}'.format(encoder_name)
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x[0], x[1:])
+        return x
